@@ -1,0 +1,6 @@
+@RentVibe_HostAddress = http://localhost:5139
+
+GET {{RentVibe_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

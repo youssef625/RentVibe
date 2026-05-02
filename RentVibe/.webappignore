@@ -1,0 +1,15 @@
+# Exclude generated/build artifacts from Azure App Service zip deploy
+bin/
+obj/
+node_modules/
+ClientApp/
+probertyApp/
+**/node_modules/
+**/dist/
+**/dist-ssr/
+.idea/
+.vscode/
+.git/
+
+# Malformed Windows-style folder name that exists as a literal path on Linux
+bin\\Debug/
