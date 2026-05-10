@@ -33,6 +33,10 @@ public class VisitsController : ControllerBase
         var property = await _db.Properties.Include(p => p.Landlord).FirstOrDefaultAsync(p => p.Id == dto.PropertyId);
         if (property is null) return NotFound(new { error = "Property not found." });
 
+        var hasPending = await _db.VisitAppointments.AnyAsync(v =>
+            v.TenantId == userId && v.PropertyId == dto.PropertyId && v.Status == VisitStatus.Pending);
+        if (hasPending) return BadRequest(new { error = "You already have a pending visit request for this property." });
+
         var visit = new VisitAppointment
         {
             PropertyId = dto.PropertyId,

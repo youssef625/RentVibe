@@ -99,13 +99,20 @@ public class MultiLevelCache : IMultiLevelCache
 
     public async Task RemoveByTagAsync(string tag)
     {
-        var keys = await _tagStore.GetKeysAsync(tag);
-        foreach (var key in keys)
+        try
         {
-            _memoryCache.Remove(key);
-            await _distributedCache.RemoveAsync(key);
-        }
+            var keys = await _tagStore.GetKeysAsync(tag);
+            foreach (var key in keys)
+            {
+                _memoryCache.Remove(key);
+                await _distributedCache.RemoveAsync(key);
+            }
 
-        await _tagStore.RemoveTagAsync(tag);
+            await _tagStore.RemoveTagAsync(tag);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to remove cache entries for tag {Tag}", tag);
+        }
     }
 }
