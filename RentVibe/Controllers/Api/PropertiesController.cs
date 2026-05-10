@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using Path = System.IO.Path;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -182,7 +183,7 @@ public class PropertiesController : ControllerBase
             var fileName = $"{Guid.NewGuid()}{Path.GetExtension(file.FileName)}";
             var filePath = Path.Combine(uploadDir, fileName);
 
-            await using var stream = new FileStream(filePath, FileMode.Create);
+            await using var stream = new System.IO.FileStream(filePath, System.IO.FileMode.Create);
             await file.CopyToAsync(stream);
 
             var url = $"/uploads/properties/{fileName}";

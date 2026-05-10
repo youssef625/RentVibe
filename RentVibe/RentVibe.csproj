@@ -9,6 +9,10 @@
     </PropertyGroup>
 
     <ItemGroup>
+        <PackageReference Include="HotChocolate.AspNetCore" Version="16.0.0" />
+        <PackageReference Include="HotChocolate.AspNetCore.Authorization" Version="16.0.0" />
+        <PackageReference Include="HotChocolate.Data.EntityFramework" Version="16.0.0" />
+        <PackageReference Include="HotChocolate.Language" Version="16.0.0" />
         <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.3" />
         <PackageReference Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" Version="10.0.3" />
         <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.3">
@@ -20,6 +24,7 @@
           <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
           <PrivateAssets>all</PrivateAssets>
         </PackageReference>
+        <PackageReference Include="Microsoft.Extensions.Caching.StackExchangeRedis" Version="10.0.3" />
         <PackageReference Include="Swashbuckle.AspNetCore" Version="10.1.4" />
     </ItemGroup>
 

@@ -8,6 +8,10 @@ using RentVibe.Data;
 using RentVibe.Hubs;
 using RentVibe.Models;
 using RentVibe.Services;
+using RentVibe.GraphQL.Mutations;
+using RentVibe.GraphQL.Queries;
+using RentVibe.Services.Caching;
+
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -79,7 +83,7 @@ builder.Services.AddAuthentication(options =>
         {
             var accessToken = context.Request.Query["access_token"];
             var path = context.HttpContext.Request.Path;
-            if (!string.IsNullOrEmpty(accessToken) && path.StartsWithSegments("/hubs"))
+            if (!string.IsNullOrEmpty(accessToken) && path.StartsWithSegments("/notificationHub"))
             {
                 context.Token = accessToken;
             }
@@ -101,11 +105,34 @@ builder.Services.AddSignalR();
 // Notification service
 builder.Services.AddScoped<NotificationService>();
 
-// CORS — allow frontend dev origin when needed
+builder.Services
+    .AddGraphQLServer()
+    .AddAuthorization()
+    .AddQueryType<PropertyQueries>()
+    .AddMutationType<PropertyMutations>()
+    .ModifyRequestOptions(opt => opt.IncludeExceptionDetails = true);
+
+
+// caching services
+builder.Services.AddMemoryCache();
+builder.Services.AddHttpContextAccessor();
+builder.Services.Configure<CacheSettings>(builder.Configuration.GetSection("CacheSettings"));
+builder.Services.AddStackExchangeRedisCache(options =>
+{
+    options.Configuration = builder.Configuration.GetConnectionString("Redis")
+                            ?? builder.Configuration["Redis:Configuration"]
+                            ?? "localhost:6379";
+});
+builder.Services.AddSingleton<CacheKeyBuilder>();
+builder.Services.AddSingleton<ICacheTagStore, DistributedCacheTagStore>();
+builder.Services.AddSingleton<IMultiLevelCache, MultiLevelCache>();
+
+
+// CORS — allow the Vite dev server during development
 builder.Services.AddCors(options =>
 {
     options.AddDefaultPolicy(policy =>
-        policy.WithOrigins("http://localhost:5173")
+        policy.WithOrigins("http://localhost:5173", "http://localhost:5139")
               .AllowAnyHeader()
               .AllowAnyMethod()
               .AllowCredentials());
@@ -126,19 +153,8 @@ app.UseSwaggerUI(c =>
 });
 
 app.UseHttpsRedirection();
-app.UseStaticFiles(new StaticFileOptions
-{
-    OnPrepareResponse = ctx =>
-    {
-        // Block direct access to sensitive application documents
-        if (ctx.File.PhysicalPath?.Contains(Path.Combine("uploads", "documents")) == true)
-        {
-            ctx.Context.Response.StatusCode = StatusCodes.Status403Forbidden;
-            ctx.Context.Response.ContentLength = 0;
-            ctx.Context.Response.Body = Stream.Null;
-        }
-    }
-});
+app.UseStaticFiles();
+app.UseWebSockets();
 app.UseRouting();
 app.UseCors();
 
@@ -146,7 +162,8 @@ app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();
-app.MapHub<NotificationHub>("/hubs/notifications");
+app.MapHub<NotificationHub>("/notificationHub");
+app.MapGraphQL("/graphql");
 
 // SPA fallback — serve the React build from wwwroot
 app.MapFallbackToFile("index.html");
