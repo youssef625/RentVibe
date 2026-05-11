@@ -23,6 +23,10 @@ public class RentalApplication
 
     public ApplicationStatus Status { get; set; } = ApplicationStatus.Pending;
 
+    public DateTime RentalStartDate { get; set; }
+
+    public DateTime RentalEndDate { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     // Navigation

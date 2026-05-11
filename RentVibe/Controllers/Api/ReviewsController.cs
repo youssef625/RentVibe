@@ -56,7 +56,8 @@ public class ReviewsController : ControllerBase
         var hadRental = await _db.RentalApplications
             .AnyAsync(a => a.PropertyId == dto.PropertyId
                         && a.TenantId == userId
-                        && a.Status == ApplicationStatus.Accepted);
+                        && a.Status == ApplicationStatus.Accepted
+                        && a.RentalEndDate <= DateTime.UtcNow);
 
         if (!hadRental)
             return BadRequest(new { error = "You can only review a property you have rented." });

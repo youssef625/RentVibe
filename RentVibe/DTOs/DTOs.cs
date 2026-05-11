@@ -31,15 +31,15 @@ public class CreatePropertyDto
 {
     [Required] [MaxLength(200)] public string Title { get; set; } = string.Empty;
     [MaxLength(2000)] public string? Description { get; set; }
-    public decimal Price { get; set; }
+    [Required] [Range(1, 1_000_000_000, ErrorMessage = "Price must be between 1 and 1,000,000,000.")] public decimal Price { get; set; }
     [Required] [MaxLength(300)] public string Location { get; set; } = string.Empty;
-    public string PropertyType { get; set; } = "Apartment";
+    [Required] public string PropertyType { get; set; } = "Apartment";
     public bool HasParking { get; set; }
     public bool HasElevator { get; set; }
     public bool IsFurnished { get; set; }
-    public int Bedrooms { get; set; }
-    public int Bathrooms { get; set; }
-    public double AreaSqFt { get; set; }
+    [Range(0, 100, ErrorMessage = "Bedrooms must be between 0 and 100.")] public int Bedrooms { get; set; }
+    [Range(0, 100, ErrorMessage = "Bathrooms must be between 0 and 100.")] public int Bathrooms { get; set; }
+    [Range(1, 100_000, ErrorMessage = "Area must be between 1 and 100,000 m².")] public double AreaSqFt { get; set; }
 }
 
 public class UpdatePropertyDto : CreatePropertyDto { }
@@ -80,6 +80,8 @@ public class CreateVisitDto
 public class CreateApplicationDto
 {
     [Required] public int PropertyId { get; set; }
+    [Required] public DateTime RentalStartDate { get; set; }
+    [Required] public DateTime RentalEndDate { get; set; }
     [MaxLength(2000)] public string? Message { get; set; }
 }
 

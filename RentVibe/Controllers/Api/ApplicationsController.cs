@@ -36,6 +36,9 @@ public class ApplicationsController : ControllerBase
         var property = await _db.Properties.Include(p => p.Landlord).FirstOrDefaultAsync(p => p.Id == dto.PropertyId);
         if (property is null) return NotFound(new { error = "Property not found." });
 
+        if (dto.RentalEndDate <= dto.RentalStartDate)
+            return BadRequest(new { error = "Rental end date must be after the start date." });
+
         if (property.RentalStatus == RentalStatus.Rented)
             return BadRequest(new { error = "Property is already rented." });
 
@@ -48,7 +51,9 @@ public class ApplicationsController : ControllerBase
         {
             PropertyId = dto.PropertyId,
             TenantId = userId,
-            Message = dto.Message
+            Message = dto.Message,
+            RentalStartDate = dto.RentalStartDate,
+            RentalEndDate = dto.RentalEndDate
         };
 
         _db.RentalApplications.Add(application);
@@ -172,7 +177,7 @@ public class ApplicationsController : ControllerBase
                 a.Id, a.PropertyId,
                 PropertyTitle = a.Property.Title,
                 Status = a.Status.ToString(),
-                a.Message, a.CreatedAt,
+                a.Message, a.RentalStartDate, a.RentalEndDate, a.CreatedAt,
                 Documents = a.Documents.Select(d => new { d.Id, d.FileName }).ToList()
             })
             .ToListAsync();
@@ -198,7 +203,7 @@ public class ApplicationsController : ControllerBase
                 TenantName = a.Tenant.FullName,
                 TenantEmail = a.Tenant.Email,
                 Status = a.Status.ToString(),
-                a.Message, a.CreatedAt,
+                a.Message, a.RentalStartDate, a.RentalEndDate, a.CreatedAt,
                 Documents = a.Documents.Select(d => new { d.Id, d.FileName }).ToList()
             })
             .ToListAsync();

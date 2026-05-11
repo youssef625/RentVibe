@@ -20,9 +20,13 @@ public class NotificationsController : ControllerBase
 
     // Get my notifications
     [HttpGet]
-    public async Task<IActionResult> GetAll()
+    public async Task<IActionResult> GetAll([FromQuery] int limit = 50)
     {
-        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
+        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (string.IsNullOrEmpty(userId)) return Unauthorized();
+
+        limit = Math.Clamp(limit, 1, 50);
+
         var notifications = await _db.Notifications
             .Where(n => n.UserId == userId)
             .OrderByDescending(n => n.CreatedAt)
@@ -35,7 +39,7 @@ public class NotificationsController : ControllerBase
                 n.IsRead,
                 n.CreatedAt
             })
-            .Take(50)
+            .Take(limit)
             .ToListAsync();
         return Ok(notifications);
     }

@@ -95,21 +95,35 @@ public class PropertiesController : ControllerBase
         return Ok(properties);
     }
 
+    // Allowed image extensions and max size for property images
+    private static readonly HashSet<string> AllowedImageExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".jpg", ".jpeg", ".png", ".webp", ".gif"
+    };
+    private const long MaxImageSize = 10 * 1024 * 1024; // 10 MB
+
     // Landlord — create property
     [HttpPost]
     [Authorize(Policy = "LandlordOnly")]
     public async Task<IActionResult> Create([FromBody] CreatePropertyDto dto)
     {
+        if (!ModelState.IsValid)
+            return BadRequest(new { errors = ModelState.Values.SelectMany(v => v.Errors).Select(e => e.ErrorMessage) });
+
+        // Validate PropertyType is a valid enum value
+        if (!Enum.TryParse<PropertyType>(dto.PropertyType, true, out var pt))
+            return BadRequest(new { error = $"Invalid property type '{dto.PropertyType}'. Allowed: {string.Join(", ", Enum.GetNames<PropertyType>())}" });
+
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
 
         var property = new Property
         {
             LandlordId = userId,
-            Title = dto.Title,
-            Description = dto.Description,
+            Title = dto.Title.Trim(),
+            Description = dto.Description?.Trim(),
             Price = dto.Price,
-            Location = dto.Location,
-            PropertyType = Enum.TryParse<PropertyType>(dto.PropertyType, true, out var pt) ? pt : PropertyType.Apartment,
+            Location = dto.Location.Trim(),
+            PropertyType = pt,
             HasParking = dto.HasParking,
             HasElevator = dto.HasElevator,
             IsFurnished = dto.IsFurnished,
@@ -130,15 +144,21 @@ public class PropertiesController : ControllerBase
     [Authorize(Policy = "LandlordOnly")]
     public async Task<IActionResult> Update(int id, [FromBody] UpdatePropertyDto dto)
     {
+        if (!ModelState.IsValid)
+            return BadRequest(new { errors = ModelState.Values.SelectMany(v => v.Errors).Select(e => e.ErrorMessage) });
+
+        if (!Enum.TryParse<PropertyType>(dto.PropertyType, true, out var pt))
+            return BadRequest(new { error = $"Invalid property type '{dto.PropertyType}'. Allowed: {string.Join(", ", Enum.GetNames<PropertyType>())}" });
+
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
         var property = await _db.Properties.FirstOrDefaultAsync(p => p.Id == id && p.LandlordId == userId);
         if (property is null) return NotFound();
 
-        property.Title = dto.Title;
-        property.Description = dto.Description;
+        property.Title = dto.Title.Trim();
+        property.Description = dto.Description?.Trim();
         property.Price = dto.Price;
-        property.Location = dto.Location;
-        property.PropertyType = Enum.TryParse<PropertyType>(dto.PropertyType, true, out var pt) ? pt : property.PropertyType;
+        property.Location = dto.Location.Trim();
+        property.PropertyType = pt;
         property.HasParking = dto.HasParking;
         property.HasElevator = dto.HasElevator;
         property.IsFurnished = dto.IsFurnished;
@@ -172,6 +192,19 @@ public class PropertiesController : ControllerBase
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
         var property = await _db.Properties.FirstOrDefaultAsync(p => p.Id == id && p.LandlordId == userId);
         if (property is null) return NotFound();
+
+        // Validate all files before saving any
+        foreach (var file in files)
+        {
+            if (file.Length == 0) continue;
+
+            var ext = Path.GetExtension(file.FileName);
+            if (!AllowedImageExtensions.Contains(ext))
+                return BadRequest(new { error = $"File type '{ext}' is not allowed. Accepted: {string.Join(", ", AllowedImageExtensions)}" });
+
+            if (file.Length > MaxImageSize)
+                return BadRequest(new { error = $"File '{file.FileName}' exceeds the maximum size of 10 MB." });
+        }
 
         var uploadDir = Path.Combine(_env.WebRootPath ?? "wwwroot", "uploads", "properties");
         Directory.CreateDirectory(uploadDir);
