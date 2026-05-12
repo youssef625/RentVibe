@@ -23,7 +23,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     {
         base.OnModelCreating(modelBuilder);
 
-        // ----- Property -----
+        
         modelBuilder.Entity<Property>(entity =>
         {
             entity.Property(p => p.Price).HasColumnType("decimal(18,2)");
@@ -38,7 +38,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             entity.HasIndex(p => p.Location);
         });
 
-        // ----- PropertyImage -----
+        
         modelBuilder.Entity<PropertyImage>(entity =>
         {
             entity.HasOne(pi => pi.Property)
@@ -47,7 +47,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
                   .OnDelete(DeleteBehavior.Cascade);
         });
 
-        // ----- Favorite (composite PK: TenantId + PropertyId) -----
+        
         modelBuilder.Entity<Favorite>(entity =>
         {
             entity.HasKey(f => new { f.TenantId, f.PropertyId });
@@ -63,7 +63,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
                   .OnDelete(DeleteBehavior.Cascade);
         });
 
-        // ----- VisitAppointment -----
+        
         modelBuilder.Entity<VisitAppointment>(entity =>
         {
             entity.HasOne(v => v.Property)
@@ -77,7 +77,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
                   .OnDelete(DeleteBehavior.Cascade);
         });
 
-        // ----- RentalApplication -----
+        
         modelBuilder.Entity<RentalApplication>(entity =>
         {
             entity.HasOne(ra => ra.Property)
@@ -91,7 +91,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
                   .OnDelete(DeleteBehavior.Cascade);
         });
 
-        // ----- ApplicationDocument -----
+        
         modelBuilder.Entity<ApplicationDocument>(entity =>
         {
             entity.HasOne(d => d.RentalApplication)
@@ -100,7 +100,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
                   .OnDelete(DeleteBehavior.Cascade);
         });
 
-        // ----- Review (one review per tenant+property) -----
+        
         modelBuilder.Entity<Review>(entity =>
         {
             entity.HasIndex(r => new { r.TenantId, r.PropertyId }).IsUnique();
@@ -116,7 +116,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
                   .OnDelete(DeleteBehavior.Cascade);
         });
 
-        // ----- Notification -----
+        
         modelBuilder.Entity<Notification>(entity =>
         {
             entity.HasOne(n => n.User)
@@ -127,14 +127,14 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             entity.HasIndex(n => new { n.UserId, n.IsRead });
         });
 
-        // ----- Seed roles (ConcurrencyStamp must be static to avoid model changes between builds) -----
+        
         modelBuilder.Entity<IdentityRole>().HasData(
             new IdentityRole { Id = "role-admin",    Name = "Admin",    NormalizedName = "ADMIN",    ConcurrencyStamp = "stamp-admin" },
             new IdentityRole { Id = "role-landlord", Name = "Landlord", NormalizedName = "LANDLORD", ConcurrencyStamp = "stamp-landlord" },
             new IdentityRole { Id = "role-tenant",   Name = "Tenant",   NormalizedName = "TENANT",   ConcurrencyStamp = "stamp-tenant" }
         );
 
-        // ----- Seed admin user -----
+        
         var adminId = "admin-user-id";
         var adminUser = new ApplicationUser
         {
@@ -155,7 +155,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
         };
         modelBuilder.Entity<ApplicationUser>().HasData(adminUser);
 
-        // Assign Admin role
+        
         modelBuilder.Entity<IdentityUserRole<string>>().HasData(
             new IdentityUserRole<string> { UserId = adminId, RoleId = "role-admin" }
         );

@@ -2,13 +2,13 @@ using System.ComponentModel.DataAnnotations;
 
 namespace RentVibe.DTOs;
 
-// ---- Auth DTOs ----
+
 public class RegisterDto
 {
     [Required] public string FullName { get; set; } = string.Empty;
     [Required] [EmailAddress] public string Email { get; set; } = string.Empty;
     [Required] [MinLength(6)] public string Password { get; set; } = string.Empty;
-    [Required] public string Role { get; set; } = "Tenant"; // "Tenant" or "Landlord"
+    [Required] public string Role { get; set; } = "Tenant"; 
 }
 
 public class LoginDto
@@ -26,7 +26,7 @@ public class AuthResponseDto
     public string Role { get; set; } = string.Empty;
 }
 
-// ---- Property DTOs ----
+
 public class CreatePropertyDto
 {
     [Required] [MaxLength(200)] public string Title { get; set; } = string.Empty;
@@ -68,7 +68,7 @@ public class PropertyResponseDto
     public int ReviewCount { get; set; }
 }
 
-// ---- Visit DTOs ----
+
 public class CreateVisitDto
 {
     [Required] public int PropertyId { get; set; }
@@ -76,7 +76,7 @@ public class CreateVisitDto
     [MaxLength(500)] public string? Message { get; set; }
 }
 
-// ---- RentalApplication DTOs ----
+
 public class CreateApplicationDto
 {
     [Required] public int PropertyId { get; set; }
@@ -85,7 +85,7 @@ public class CreateApplicationDto
     [MaxLength(2000)] public string? Message { get; set; }
 }
 
-// ---- Review DTOs ----
+
 public class CreateReviewDto
 {
     [Required] public int PropertyId { get; set; }

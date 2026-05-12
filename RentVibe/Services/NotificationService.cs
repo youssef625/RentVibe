@@ -1,5 +1,5 @@
 using Microsoft.AspNetCore.SignalR;
-using RentVibe.Data;
+using RentVibe.Data.Repositories;
 using RentVibe.Hubs;
 using RentVibe.Models;
 using RentVibe.Models.Enums;
@@ -8,12 +8,12 @@ namespace RentVibe.Services;
 
 public class NotificationService
 {
-    private readonly AppDbContext _db;
+    private readonly DataRepository<Notification> _notificationRepo;
     private readonly IHubContext<NotificationHub> _hubContext;
 
-    public NotificationService(AppDbContext db, IHubContext<NotificationHub> hubContext)
+    public NotificationService(DataRepository<Notification> notificationRepo, IHubContext<NotificationHub> hubContext)
     {
-        _db = db;
+        _notificationRepo = notificationRepo;
         _hubContext = hubContext;
     }
 
@@ -27,8 +27,7 @@ public class NotificationService
             ReferenceId = referenceId
         };
 
-        _db.Notifications.Add(notification);
-        await _db.SaveChangesAsync();
+        await _notificationRepo.AddAsync(notification);
 
         await _hubContext.Clients.Group(userId).SendAsync("ReceiveNotification", new
         {

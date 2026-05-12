@@ -1,8 +1,7 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
-using RentVibe.Data;
+using RentVibe.Data.Repositories;
 using RentVibe.DTOs;
 using RentVibe.Models;
 using RentVibe.Models.Enums;
@@ -15,60 +14,65 @@ namespace RentVibe.Controllers.Api;
 [Authorize]
 public class ReviewsController : ControllerBase
 {
-    private readonly AppDbContext _db;
+    private readonly ReviewRepository _reviews;
+    private readonly RentalApplicationRepository _applications;
+    private readonly DataRepository<Review> _reviewRepo;
+    private readonly DataRepository<Property> _propertyRepo;
     private readonly NotificationService _notifications;
 
-    public ReviewsController(AppDbContext db, NotificationService notifications)
+    public ReviewsController(
+        ReviewRepository reviews,
+        RentalApplicationRepository applications,
+        DataRepository<Review> reviewRepo,
+        DataRepository<Property> propertyRepo,
+        NotificationService notifications)
     {
-        _db = db;
+        _reviews = reviews;
+        _applications = applications;
+        _reviewRepo = reviewRepo;
+        _propertyRepo = propertyRepo;
         _notifications = notifications;
     }
 
-    // Get reviews for a property (public)
+    
     [HttpGet("property/{propertyId:int}")]
     [AllowAnonymous]
     public async Task<IActionResult> GetByProperty(int propertyId)
     {
-        var reviews = await _db.Reviews
-            .Where(r => r.PropertyId == propertyId)
-            .Include(r => r.Tenant)
-            .OrderByDescending(r => r.CreatedAt)
-            .Select(r => new
-            {
-                r.Id,
-                r.Rating,
-                r.Comment,
-                TenantName = r.Tenant.FullName,
-                r.CreatedAt
-            })
-            .ToListAsync();
-        return Ok(reviews);
+        var reviews = await _reviews.GetByPropertyAsync(propertyId);
+        var result = reviews.Select(r => new
+        {
+            r.Id,
+            r.Rating,
+            r.Comment,
+            TenantName = r.Tenant.FullName,
+            r.CreatedAt
+        });
+        return Ok(result);
     }
 
-    // Tenant — submit a review (only after rental period, i.e. had an accepted application)
+    
     [HttpPost]
     [Authorize(Policy = "TenantOnly")]
     public async Task<IActionResult> Create([FromBody] CreateReviewDto dto)
     {
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
 
-        // Verify tenant had an accepted application for this property
-        var hadRental = await _db.RentalApplications
-            .AnyAsync(a => a.PropertyId == dto.PropertyId
-                        && a.TenantId == userId
-                        && a.Status == ApplicationStatus.Accepted
-                        && a.RentalEndDate <= DateTime.UtcNow);
+        
+        var hadRental = await _applications.TenantHadAcceptedRentalAsync(
+            dto.PropertyId,
+            userId,
+            DateTime.UtcNow);
 
         if (!hadRental)
             return BadRequest(new { error = "You can only review a property you have rented." });
 
-        var alreadyReviewed = await _db.Reviews
-            .AnyAsync(r => r.PropertyId == dto.PropertyId && r.TenantId == userId);
+        var alreadyReviewed = await _reviews.ExistsAsync(dto.PropertyId, userId);
 
         if (alreadyReviewed)
             return BadRequest(new { error = "You have already reviewed this property." });
 
-        var property = await _db.Properties.FindAsync(dto.PropertyId);
+        var property = await _propertyRepo.GetByIdAsync(dto.PropertyId);
         if (property is null) return NotFound();
 
         var review = new Review
@@ -79,8 +83,7 @@ public class ReviewsController : ControllerBase
             Comment = dto.Comment
         };
 
-        _db.Reviews.Add(review);
-        await _db.SaveChangesAsync();
+        await _reviewRepo.AddAsync(review);
 
         var tenantName = User.FindFirstValue(ClaimTypes.Name) ?? "A tenant";
         await _notifications.SendAsync(property.LandlordId,

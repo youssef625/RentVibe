@@ -2,8 +2,7 @@ using System.Security.Claims;
 using Path = System.IO.Path;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
-using RentVibe.Data;
+using RentVibe.Data.Repositories;
 using RentVibe.DTOs;
 using RentVibe.Models;
 using RentVibe.Models.Enums;
@@ -14,16 +13,24 @@ namespace RentVibe.Controllers.Api;
 [Route("api/[controller]")]
 public class PropertiesController : ControllerBase
 {
-    private readonly AppDbContext _db;
+    private readonly PropertyRepository _properties;
+    private readonly DataRepository<Property> _propertyRepo;
+    private readonly DataRepository<PropertyImage> _imageRepo;
     private readonly IWebHostEnvironment _env;
 
-    public PropertiesController(AppDbContext db, IWebHostEnvironment env)
+    public PropertiesController(
+        PropertyRepository properties,
+        DataRepository<Property> propertyRepo,
+        DataRepository<PropertyImage> imageRepo,
+        IWebHostEnvironment env)
     {
-        _db = db;
+        _properties = properties;
+        _propertyRepo = propertyRepo;
+        _imageRepo = imageRepo;
         _env = env;
     }
 
-    // Public — browse approved properties with search/filter
+    
     [HttpGet]
     public async Task<IActionResult> GetAll(
         [FromQuery] string? search,
@@ -32,98 +39,59 @@ public class PropertiesController : ControllerBase
         [FromQuery] decimal? maxPrice,
         [FromQuery] string? propertyType)
     {
-        var query = _db.Properties
-            .Where(p => p.ApprovalStatus == ApprovalStatus.Approved
-                        && p.RentalStatus == RentalStatus.Available)
-            .Include(p => p.Landlord)
-            .Include(p => p.Images)
-            .Include(p => p.Reviews)
-            .AsQueryable();
+        PropertyType? parsedType = null;
+        if (!string.IsNullOrWhiteSpace(propertyType)
+            && Enum.TryParse<PropertyType>(propertyType, true, out var pt))
+        {
+            parsedType = pt;
+        }
 
-        if (!string.IsNullOrWhiteSpace(search))
-            query = query.Where(p => p.Title.Contains(search) || p.Description!.Contains(search));
+        var properties = await _properties.GetApprovedAvailableAsync(
+            search,
+            location,
+            minPrice,
+            maxPrice,
+            parsedType);
 
-        if (!string.IsNullOrWhiteSpace(location))
-            query = query.Where(p => p.Location.Contains(location));
-
-        if (minPrice.HasValue)
-            query = query.Where(p => p.Price >= minPrice.Value);
-
-        if (maxPrice.HasValue)
-            query = query.Where(p => p.Price <= maxPrice.Value);
-
-        if (!string.IsNullOrWhiteSpace(propertyType) && Enum.TryParse<PropertyType>(propertyType, true, out var pt))
-            query = query.Where(p => p.PropertyType == pt);
-
-        var properties = await query
-            .OrderByDescending(p => p.CreatedAt)
-            .Select(p => MapToDto(p))
-            .ToListAsync();
-
-        return Ok(properties);
+        return Ok(properties.Select(MapToDto).ToList());
     }
 
-    // Public — get single property
+    
     [HttpGet("{id:int}")]
     public async Task<IActionResult> GetById(int id)
     {
-        var property = await _db.Properties
-            .Include(p => p.Landlord)
-            .Include(p => p.Images)
-            .Include(p => p.Reviews)
-            .FirstOrDefaultAsync(p => p.Id == id);
+        var property = await _properties.GetByIdWithDetailsAsync(id);
 
         if (property is null) return NotFound();
         return Ok(MapToDto(property));
     }
 
-    // Landlord — get own properties (all statuses)
+    
     [HttpGet("my")]
     [Authorize(Policy = "LandlordOnly")]
     public async Task<IActionResult> GetMyProperties()
     {
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
-        var properties = await _db.Properties
-            .Where(p => p.LandlordId == userId)
-            .Include(p => p.Landlord)
-            .Include(p => p.Images)
-            .Include(p => p.Reviews)
-            .OrderByDescending(p => p.CreatedAt)
-            .Select(p => MapToDto(p))
-            .ToListAsync();
+        var properties = await _properties.GetByLandlordAsync(userId);
 
-        return Ok(properties);
+        return Ok(properties.Select(MapToDto).ToList());
     }
 
-    // Allowed image extensions and max size for property images
-    private static readonly HashSet<string> AllowedImageExtensions = new(StringComparer.OrdinalIgnoreCase)
-    {
-        ".jpg", ".jpeg", ".png", ".webp", ".gif"
-    };
-    private const long MaxImageSize = 10 * 1024 * 1024; // 10 MB
-
-    // Landlord — create property
+    
     [HttpPost]
     [Authorize(Policy = "LandlordOnly")]
     public async Task<IActionResult> Create([FromBody] CreatePropertyDto dto)
     {
-        if (!ModelState.IsValid)
-            return BadRequest(new { errors = ModelState.Values.SelectMany(v => v.Errors).Select(e => e.ErrorMessage) });
-
-        // Validate PropertyType is a valid enum value
-        if (!Enum.TryParse<PropertyType>(dto.PropertyType, true, out var pt))
-            return BadRequest(new { error = $"Invalid property type '{dto.PropertyType}'. Allowed: {string.Join(", ", Enum.GetNames<PropertyType>())}" });
-
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
 
         var property = new Property
         {
             LandlordId = userId,
-            Title = dto.Title.Trim(),
-            Description = dto.Description?.Trim(),
+            Title = dto.Title,
+            Description = dto.Description,
             Price = dto.Price,
-            Location = dto.Location.Trim(),
-            PropertyType = pt,
+            Location = dto.Location,
+            PropertyType = Enum.TryParse<PropertyType>(dto.PropertyType, true, out var pt) ? pt : PropertyType.Apartment,
             HasParking = dto.HasParking,
             HasElevator = dto.HasElevator,
             IsFurnished = dto.IsFurnished,
@@ -133,32 +101,25 @@ public class PropertiesController : ControllerBase
             ApprovalStatus = ApprovalStatus.Pending
         };
 
-        _db.Properties.Add(property);
-        await _db.SaveChangesAsync();
+        await _propertyRepo.AddAsync(property);
 
         return CreatedAtAction(nameof(GetById), new { id = property.Id }, new { property.Id });
     }
 
-    // Landlord — update own property
+    
     [HttpPut("{id:int}")]
     [Authorize(Policy = "LandlordOnly")]
     public async Task<IActionResult> Update(int id, [FromBody] UpdatePropertyDto dto)
     {
-        if (!ModelState.IsValid)
-            return BadRequest(new { errors = ModelState.Values.SelectMany(v => v.Errors).Select(e => e.ErrorMessage) });
-
-        if (!Enum.TryParse<PropertyType>(dto.PropertyType, true, out var pt))
-            return BadRequest(new { error = $"Invalid property type '{dto.PropertyType}'. Allowed: {string.Join(", ", Enum.GetNames<PropertyType>())}" });
-
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
-        var property = await _db.Properties.FirstOrDefaultAsync(p => p.Id == id && p.LandlordId == userId);
+        var property = await _properties.GetByIdForLandlordAsync(id, userId);
         if (property is null) return NotFound();
 
-        property.Title = dto.Title.Trim();
-        property.Description = dto.Description?.Trim();
+        property.Title = dto.Title;
+        property.Description = dto.Description;
         property.Price = dto.Price;
-        property.Location = dto.Location.Trim();
-        property.PropertyType = pt;
+        property.Location = dto.Location;
+        property.PropertyType = Enum.TryParse<PropertyType>(dto.PropertyType, true, out var pt) ? pt : property.PropertyType;
         property.HasParking = dto.HasParking;
         property.HasElevator = dto.HasElevator;
         property.IsFurnished = dto.IsFurnished;
@@ -166,50 +127,37 @@ public class PropertiesController : ControllerBase
         property.Bathrooms = dto.Bathrooms;
         property.AreaSqFt = dto.AreaSqFt;
 
-        await _db.SaveChangesAsync();
+        await _propertyRepo.UpdateAsync(property);
         return Ok(new { message = "Property updated." });
     }
 
-    // Landlord — delete own property
+    
     [HttpDelete("{id:int}")]
     [Authorize(Policy = "LandlordOnly")]
     public async Task<IActionResult> Delete(int id)
     {
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
-        var property = await _db.Properties.FirstOrDefaultAsync(p => p.Id == id && p.LandlordId == userId);
+        var property = await _properties.GetByIdForLandlordAsync(id, userId);
         if (property is null) return NotFound();
 
-        _db.Properties.Remove(property);
-        await _db.SaveChangesAsync();
+        await _propertyRepo.DeleteAsync(property);
         return NoContent();
     }
 
-    // Landlord — upload images for a property
+    
     [HttpPost("{id:int}/images")]
     [Authorize(Policy = "LandlordOnly")]
     public async Task<IActionResult> UploadImages(int id, [FromForm] List<IFormFile> files)
     {
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
-        var property = await _db.Properties.FirstOrDefaultAsync(p => p.Id == id && p.LandlordId == userId);
+        var property = await _properties.GetByIdForLandlordAsync(id, userId);
         if (property is null) return NotFound();
-
-        // Validate all files before saving any
-        foreach (var file in files)
-        {
-            if (file.Length == 0) continue;
-
-            var ext = Path.GetExtension(file.FileName);
-            if (!AllowedImageExtensions.Contains(ext))
-                return BadRequest(new { error = $"File type '{ext}' is not allowed. Accepted: {string.Join(", ", AllowedImageExtensions)}" });
-
-            if (file.Length > MaxImageSize)
-                return BadRequest(new { error = $"File '{file.FileName}' exceeds the maximum size of 10 MB." });
-        }
 
         var uploadDir = Path.Combine(_env.WebRootPath ?? "wwwroot", "uploads", "properties");
         Directory.CreateDirectory(uploadDir);
 
         var urls = new List<string>();
+        var images = new List<PropertyImage>();
         foreach (var file in files)
         {
             if (file.Length == 0) continue;
@@ -220,11 +168,14 @@ public class PropertiesController : ControllerBase
             await file.CopyToAsync(stream);
 
             var url = $"/uploads/properties/{fileName}";
-            _db.PropertyImages.Add(new PropertyImage { PropertyId = id, ImageUrl = url });
+            images.Add(new PropertyImage { PropertyId = id, ImageUrl = url });
             urls.Add(url);
         }
 
-        await _db.SaveChangesAsync();
+        if (images.Count > 0)
+        {
+            await _properties.AddImagesAsync(images);
+        }
         return Ok(new { imageUrls = urls });
     }
 
@@ -236,9 +187,7 @@ public class PropertiesController : ControllerBase
             return BadRequest(new { message = "imageUrl is required." });
 
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
-        var image = await _db.PropertyImages
-            .Include(i => i.Property)
-            .FirstOrDefaultAsync(i => i.PropertyId == propertyId && i.ImageUrl == imageUrl && i.Property.LandlordId == userId);
+        var image = await _properties.GetImageForLandlordAsync(propertyId, imageUrl, userId);
 
         if (image is null) return NotFound();
 
@@ -246,8 +195,7 @@ public class PropertiesController : ControllerBase
         if (System.IO.File.Exists(filePath))
             System.IO.File.Delete(filePath);
 
-        _db.PropertyImages.Remove(image);
-        await _db.SaveChangesAsync();
+        await _imageRepo.DeleteAsync(image);
         return NoContent();
     }
 

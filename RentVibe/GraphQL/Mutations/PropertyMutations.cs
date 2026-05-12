@@ -1,8 +1,7 @@
 using System.Security.Claims;
 using HotChocolate;
 using HotChocolate.Authorization;
-using Microsoft.EntityFrameworkCore;
-using RentVibe.Data;
+using RentVibe.Data.Repositories;
 using RentVibe.DTOs;
 using RentVibe.Models;
 using RentVibe.Models.Enums;
@@ -15,7 +14,7 @@ public class PropertyMutations
     [Authorize(Policy = "LandlordOnly")]
     public async Task<PropertyResponseDto> CreateProperty(
         CreatePropertyDto dto,
-        [Service] AppDbContext db,
+        [Service] DataRepository<Property> propertyRepo,
         [Service] IMultiLevelCache cache,
         [Service] IHttpContextAccessor httpContextAccessor)
     {
@@ -42,8 +41,7 @@ public class PropertyMutations
             ApprovalStatus = ApprovalStatus.Pending
         };
 
-        db.Properties.Add(property);
-        await db.SaveChangesAsync();
+        await propertyRepo.AddAsync(property);
 
         await cache.RemoveByTagAsync("properties:list");
         await cache.RemoveByTagAsync($"properties:detail:{property.Id}");
@@ -55,7 +53,8 @@ public class PropertyMutations
     public async Task<PropertyResponseDto?> UpdateProperty(
         int id,
         UpdatePropertyDto dto,
-        [Service] AppDbContext db,
+        [Service] PropertyRepository properties,
+        [Service] DataRepository<Property> propertyRepo,
         [Service] IMultiLevelCache cache,
         [Service] IHttpContextAccessor httpContextAccessor)
     {
@@ -65,7 +64,7 @@ public class PropertyMutations
             throw new GraphQLException("Unauthorized");
         }
 
-        var property = await db.Properties.FirstOrDefaultAsync(p => p.Id == id && p.LandlordId == userId);
+        var property = await properties.GetByIdForLandlordAsync(id, userId);
         if (property is null) return null;
 
         property.Title = dto.Title;
@@ -80,7 +79,7 @@ public class PropertyMutations
         property.Bathrooms = dto.Bathrooms;
         property.AreaSqFt = dto.AreaSqFt;
 
-        await db.SaveChangesAsync();
+        await propertyRepo.UpdateAsync(property);
 
         await cache.RemoveByTagAsync("properties:list");
         await cache.RemoveByTagAsync($"properties:detail:{property.Id}");
@@ -91,7 +90,8 @@ public class PropertyMutations
     [Authorize(Policy = "LandlordOnly")]
     public async Task<bool> DeleteProperty(
         int id,
-        [Service] AppDbContext db,
+        [Service] PropertyRepository properties,
+        [Service] DataRepository<Property> propertyRepo,
         [Service] IMultiLevelCache cache,
         [Service] IHttpContextAccessor httpContextAccessor)
     {
@@ -101,11 +101,10 @@ public class PropertyMutations
             throw new GraphQLException("Unauthorized");
         }
 
-        var property = await db.Properties.FirstOrDefaultAsync(p => p.Id == id && p.LandlordId == userId);
+        var property = await properties.GetByIdForLandlordAsync(id, userId);
         if (property is null) return false;
 
-        db.Properties.Remove(property);
-        await db.SaveChangesAsync();
+        await propertyRepo.DeleteAsync(property);
 
         await cache.RemoveByTagAsync("properties:list");
         await cache.RemoveByTagAsync($"properties:detail:{property.Id}");

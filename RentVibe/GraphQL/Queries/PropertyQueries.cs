@@ -1,6 +1,5 @@
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
-using RentVibe.Data;
+using RentVibe.Data.Repositories;
 using RentVibe.DTOs;
 using RentVibe.Models.Enums;
 using RentVibe.Services.Caching;
@@ -15,74 +14,78 @@ public class PropertyQueries
         decimal? minPrice,
         decimal? maxPrice,
         string? propertyType,
-        [Service] AppDbContext db,
+        [Service] PropertyRepository properties,
         [Service] IMultiLevelCache cache,
         [Service] CacheKeyBuilder keyBuilder,
-        [Service] IOptions<CacheSettings> cacheOptions)
+        [Service] IOptions<CacheSettings> cacheOptions,
+        [Service] IHttpContextAccessor httpContextAccessor)
     {
         var args = new { search, location, minPrice, maxPrice, propertyType };
         var key = keyBuilder.Build("properties:list", args, null);
         var ttl = TimeSpan.FromSeconds(cacheOptions.Value.PropertyListTtlSeconds);
 
-        return await cache.GetOrCreateAsync(key, ttl, async () =>
+        var result = await cache.GetOrCreateWithMetadataAsync(key, ttl, async () =>
         {
-            var query = db.Properties
-                .AsNoTracking()
-                .Where(p => p.ApprovalStatus == ApprovalStatus.Approved
-                            && p.RentalStatus == RentalStatus.Available)
-                .Include(p => p.Landlord)
-                .Include(p => p.Images)
-                .Include(p => p.Reviews)
-                .AsQueryable();
-
-            if (!string.IsNullOrWhiteSpace(search))
-                query = query.Where(p => p.Title.Contains(search) || p.Description!.Contains(search));
-
-            if (!string.IsNullOrWhiteSpace(location))
-                query = query.Where(p => p.Location.Contains(location));
-
-            if (minPrice.HasValue)
-                query = query.Where(p => p.Price >= minPrice.Value);
-
-            if (maxPrice.HasValue)
-                query = query.Where(p => p.Price <= maxPrice.Value);
-
+            PropertyType? parsedType = null;
             if (!string.IsNullOrWhiteSpace(propertyType)
                 && Enum.TryParse<PropertyType>(propertyType, true, out var pt))
             {
-                query = query.Where(p => p.PropertyType == pt);
+                parsedType = pt;
             }
 
-            var entities = await query
-                .OrderByDescending(p => p.CreatedAt)
-                .ToListAsync();
+            var entities = await properties.GetApprovedAvailableAsync(
+                search,
+                location,
+                minPrice,
+                maxPrice,
+                parsedType);
 
             return entities.Select(p => MapToDto(p)).ToList();
         }, new[] { "properties:list" });
+
+        SetCacheHeader(httpContextAccessor, result.Source);
+        return result.Value;
     }
 
     public async Task<PropertyResponseDto?> GetPropertyById(
         int id,
-        [Service] AppDbContext db,
+        [Service] PropertyRepository properties,
         [Service] IMultiLevelCache cache,
         [Service] CacheKeyBuilder keyBuilder,
-        [Service] IOptions<CacheSettings> cacheOptions)
+        [Service] IOptions<CacheSettings> cacheOptions,
+        [Service] IHttpContextAccessor httpContextAccessor)
     {
         var key = keyBuilder.Build("properties:detail", new { id }, null);
         var ttl = TimeSpan.FromSeconds(cacheOptions.Value.PropertyDetailTtlSeconds);
         var tag = $"properties:detail:{id}";
 
-        return await cache.GetOrCreateAsync(key, ttl, async () =>
+        var result = await cache.GetOrCreateWithMetadataAsync(key, ttl, async () =>
         {
-            var property = await db.Properties
-                .AsNoTracking()
-                .Include(p => p.Landlord)
-                .Include(p => p.Images)
-                .Include(p => p.Reviews)
-                .FirstOrDefaultAsync(p => p.Id == id);
+            var property = await properties.GetByIdWithDetailsAsync(id);
 
             return property is null ? null : MapToDto(property);
         }, new[] { tag });
+
+        SetCacheHeader(httpContextAccessor, result.Source);
+        return result.Value;
+    }
+
+    private static void SetCacheHeader(IHttpContextAccessor httpContextAccessor, CacheSource source)
+    {
+        var response = httpContextAccessor.HttpContext?.Response;
+        if (response is null)
+        {
+            return;
+        }
+
+        var headerValue = source switch
+        {
+            CacheSource.L1 => "HIT;L1",
+            CacheSource.L2 => "HIT;L2",
+            _ => "MISS"
+        };
+
+        response.Headers["X-Cache"] = headerValue;
     }
 
     private static PropertyResponseDto MapToDto(Models.Property p) => new()

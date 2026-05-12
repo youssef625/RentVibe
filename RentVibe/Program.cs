@@ -11,14 +11,15 @@ using RentVibe.Services;
 using RentVibe.GraphQL.Mutations;
 using RentVibe.GraphQL.Queries;
 using RentVibe.Services.Caching;
+using RentVibe.Data.Repositories;
 
 
 var builder = WebApplication.CreateBuilder(args);
 
-// API controllers
+
 builder.Services.AddControllers();
 
-// Swagger
+
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>
 {
@@ -40,11 +41,11 @@ builder.Services.AddSwaggerGen(c =>
     });
 });
 
-// Entity Framework Core + SQL Server
+
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
 
-// ASP.NET Core Identity
+
 builder.Services.AddIdentity<ApplicationUser, IdentityRole>(options =>
 {
     options.Password.RequireDigit = true;
@@ -56,7 +57,7 @@ builder.Services.AddIdentity<ApplicationUser, IdentityRole>(options =>
 .AddEntityFrameworkStores<AppDbContext>()
 .AddDefaultTokenProviders();
 
-// JWT Authentication
+
 var jwtSecret = builder.Configuration["JwtSettings:Secret"]!;
 builder.Services.AddAuthentication(options =>
 {
@@ -76,7 +77,7 @@ builder.Services.AddAuthentication(options =>
         IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSecret))
     };
 
-    // Allow SignalR to receive the token via query string
+    
     options.Events = new JwtBearerEvents
     {
         OnMessageReceived = context =>
@@ -92,17 +93,27 @@ builder.Services.AddAuthentication(options =>
     };
 });
 
-// Authorization policies
+
 builder.Services.AddAuthorizationBuilder()
     .AddPolicy("AdminOnly", p => p.RequireRole("Admin"))
     .AddPolicy("LandlordOnly", p => p.RequireRole("Landlord"))
     .AddPolicy("TenantOnly", p => p.RequireRole("Tenant"))
     .AddPolicy("LandlordOrAdmin", p => p.RequireRole("Admin", "Landlord"));
 
-// SignalR
+
 builder.Services.AddSignalR();
 
-// Notification service
+
+builder.Services.AddScoped(typeof(DataRepository<>), typeof(DataRepository<>));
+builder.Services.AddScoped<PropertyRepository>();
+builder.Services.AddScoped<RentalApplicationRepository>();
+builder.Services.AddScoped<VisitRepository>();
+builder.Services.AddScoped<FavoriteRepository>();
+builder.Services.AddScoped<ReviewRepository>();
+builder.Services.AddScoped<NotificationRepository>();
+builder.Services.AddScoped<ApprovalRepository>();
+
+
 builder.Services.AddScoped<NotificationService>();
 
 builder.Services
@@ -113,7 +124,7 @@ builder.Services
     .ModifyRequestOptions(opt => opt.IncludeExceptionDetails = true);
 
 
-// caching services
+
 builder.Services.AddMemoryCache();
 builder.Services.AddHttpContextAccessor();
 builder.Services.Configure<CacheSettings>(builder.Configuration.GetSection("CacheSettings"));
@@ -128,7 +139,7 @@ builder.Services.AddSingleton<ICacheTagStore, DistributedCacheTagStore>();
 builder.Services.AddSingleton<IMultiLevelCache, MultiLevelCache>();
 
 
-// CORS — allow the Vite dev server during development
+
 builder.Services.AddCors(options =>
 {
     options.AddDefaultPolicy(policy =>
@@ -165,7 +176,7 @@ app.MapControllers();
 app.MapHub<NotificationHub>("/notificationHub");
 app.MapGraphQL("/graphql");
 
-// SPA fallback — serve the React build from wwwroot
+
 app.MapFallbackToFile("index.html");
 
 app.Run();

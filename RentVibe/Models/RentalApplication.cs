@@ -29,6 +29,6 @@ public class RentalApplication
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
-    // Navigation
+    
     public ICollection<ApplicationDocument> Documents { get; set; } = new List<ApplicationDocument>();
 }

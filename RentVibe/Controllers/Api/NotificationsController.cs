@@ -1,8 +1,7 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
-using RentVibe.Data;
+using RentVibe.Data.Repositories;
 
 namespace RentVibe.Controllers.Api;
 
@@ -11,14 +10,18 @@ namespace RentVibe.Controllers.Api;
 [Authorize]
 public class NotificationsController : ControllerBase
 {
-    private readonly AppDbContext _db;
+    private readonly NotificationRepository _notifications;
+    private readonly DataRepository<Models.Notification> _notificationRepo;
 
-    public NotificationsController(AppDbContext db)
+    public NotificationsController(
+        NotificationRepository notifications,
+        DataRepository<Models.Notification> notificationRepo)
     {
-        _db = db;
+        _notifications = notifications;
+        _notificationRepo = notificationRepo;
     }
 
-    // Get my notifications
+    
     [HttpGet]
     public async Task<IActionResult> GetAll([FromQuery] int limit = 50)
     {
@@ -27,53 +30,47 @@ public class NotificationsController : ControllerBase
 
         limit = Math.Clamp(limit, 1, 50);
 
-        var notifications = await _db.Notifications
-            .Where(n => n.UserId == userId)
-            .OrderByDescending(n => n.CreatedAt)
-            .Select(n => new
-            {
-                n.Id,
-                n.Message,
-                Type = n.Type.ToString(),
-                n.ReferenceId,
-                n.IsRead,
-                n.CreatedAt
-            })
-            .Take(limit)
-            .ToListAsync();
-        return Ok(notifications);
+        var notifications = await _notifications.GetByUserAsync(userId, limit);
+        var result = notifications.Select(n => new
+        {
+            n.Id,
+            n.Message,
+            Type = n.Type.ToString(),
+            n.ReferenceId,
+            n.IsRead,
+            n.CreatedAt
+        });
+        return Ok(result);
     }
 
-    // Get unread count
+    
     [HttpGet("unread-count")]
     public async Task<IActionResult> GetUnreadCount()
     {
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
-        var count = await _db.Notifications.CountAsync(n => n.UserId == userId && !n.IsRead);
+        var count = await _notifications.GetUnreadCountAsync(userId);
         return Ok(new { count });
     }
 
-    // Mark one as read
+    
     [HttpPost("{id:int}/read")]
     public async Task<IActionResult> MarkAsRead(int id)
     {
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
-        var notification = await _db.Notifications.FirstOrDefaultAsync(n => n.Id == id && n.UserId == userId);
+        var notification = await _notifications.GetByIdForUserAsync(id, userId);
         if (notification is null) return NotFound();
 
         notification.IsRead = true;
-        await _db.SaveChangesAsync();
+        await _notificationRepo.UpdateAsync(notification);
         return Ok(new { message = "Marked as read." });
     }
 
-    // Mark all as read
+    
     [HttpPost("read-all")]
     public async Task<IActionResult> MarkAllAsRead()
     {
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
-        await _db.Notifications
-            .Where(n => n.UserId == userId && !n.IsRead)
-            .ExecuteUpdateAsync(n => n.SetProperty(x => x.IsRead, true));
+        await _notifications.MarkAllAsReadAsync(userId);
         return Ok(new { message = "All notifications marked as read." });
     }
 }

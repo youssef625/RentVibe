@@ -31,10 +31,20 @@ public class MultiLevelCache : IMultiLevelCache
 
     public async Task<T> GetOrCreateAsync<T>(string key, TimeSpan ttl, Func<Task<T>> factory, IReadOnlyList<string>? tags = null)
     {
+        var result = await GetOrCreateWithMetadataAsync(key, ttl, factory, tags);
+        return result.Value;
+    }
+
+    public async Task<CacheResult<T>> GetOrCreateWithMetadataAsync<T>(
+        string key,
+        TimeSpan ttl,
+        Func<Task<T>> factory,
+        IReadOnlyList<string>? tags = null)
+    {
         if (_memoryCache.TryGetValue(key, out T? cached) && cached is not null)
         {
             _logger.LogDebug("Cache hit (L1) {Key}", key);
-            return cached;
+            return new CacheResult<T>(cached, CacheSource.L1);
         }
 
         try
@@ -47,7 +57,7 @@ public class MultiLevelCache : IMultiLevelCache
                 {
                     _logger.LogDebug("Cache hit (L2) {Key}", key);
                     _memoryCache.Set(key, value, ttl);
-                    return value;
+                    return new CacheResult<T>(value, CacheSource.L2);
                 }
             }
         }
@@ -58,8 +68,8 @@ public class MultiLevelCache : IMultiLevelCache
 
         _logger.LogDebug("Cache miss {Key}", key);
         var created = await factory();
-        
-        try 
+
+        try
         {
             var entryOptions = new DistributedCacheEntryOptions
             {
@@ -73,7 +83,7 @@ public class MultiLevelCache : IMultiLevelCache
         {
             _logger.LogWarning(ex, "Failed to write to distributed cache for key {Key}", key);
         }
-        
+
         _memoryCache.Set(key, created, ttl);
 
         if (tags is { Count: > 0 })
@@ -88,7 +98,7 @@ public class MultiLevelCache : IMultiLevelCache
             }
         }
 
-        return created;
+        return new CacheResult<T>(created, CacheSource.Miss);
     }
 
     public async Task RemoveAsync(string key)

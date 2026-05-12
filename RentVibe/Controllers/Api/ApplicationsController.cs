@@ -2,8 +2,7 @@ using System.Security.Claims;
 using Path = System.IO.Path;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
-using RentVibe.Data;
+using RentVibe.Data.Repositories;
 using RentVibe.DTOs;
 using RentVibe.Models;
 using RentVibe.Models.Enums;
@@ -16,24 +15,33 @@ namespace RentVibe.Controllers.Api;
 [Authorize]
 public class ApplicationsController : ControllerBase
 {
-    private readonly AppDbContext _db;
+    private readonly PropertyRepository _properties;
+    private readonly RentalApplicationRepository _applications;
+    private readonly DataRepository<RentalApplication> _applicationRepo;
     private readonly IWebHostEnvironment _env;
     private readonly NotificationService _notifications;
 
-    public ApplicationsController(AppDbContext db, IWebHostEnvironment env, NotificationService notifications)
+    public ApplicationsController(
+        PropertyRepository properties,
+        RentalApplicationRepository applications,
+        DataRepository<RentalApplication> applicationRepo,
+        IWebHostEnvironment env,
+        NotificationService notifications)
     {
-        _db = db;
+        _properties = properties;
+        _applications = applications;
+        _applicationRepo = applicationRepo;
         _env = env;
         _notifications = notifications;
     }
 
-    // Tenant — submit a rental application
+    
     [HttpPost]
     [Authorize(Policy = "TenantOnly")]
     public async Task<IActionResult> Create([FromBody] CreateApplicationDto dto)
     {
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
-        var property = await _db.Properties.Include(p => p.Landlord).FirstOrDefaultAsync(p => p.Id == dto.PropertyId);
+        var property = await _properties.GetWithLandlordAsync(dto.PropertyId);
         if (property is null) return NotFound(new { error = "Property not found." });
 
         if (dto.RentalEndDate <= dto.RentalStartDate)
@@ -42,8 +50,7 @@ public class ApplicationsController : ControllerBase
         if (property.RentalStatus == RentalStatus.Rented)
             return BadRequest(new { error = "Property is already rented." });
 
-        var existing = await _db.RentalApplications
-            .AnyAsync(a => a.PropertyId == dto.PropertyId && a.TenantId == userId && a.Status == ApplicationStatus.Pending);
+        var existing = await _applications.HasPendingApplicationAsync(dto.PropertyId, userId);
         if (existing)
             return BadRequest(new { error = "You already have a pending application for this property." });
 
@@ -56,8 +63,7 @@ public class ApplicationsController : ControllerBase
             RentalEndDate = dto.RentalEndDate
         };
 
-        _db.RentalApplications.Add(application);
-        await _db.SaveChangesAsync();
+        await _applicationRepo.AddAsync(application);
 
         var tenantName = User.FindFirstValue(ClaimTypes.Name) ?? "A tenant";
         await _notifications.SendAsync(property.LandlordId,
@@ -72,18 +78,18 @@ public class ApplicationsController : ControllerBase
         ".pdf", ".jpg", ".jpeg", ".png", ".doc", ".docx"
     };
 
-    private const long MaxFileSize = 5 * 1024 * 1024; // 5 MB
+    private const long MaxFileSize = 5 * 1024 * 1024; 
 
-    // Tenant — upload documents for an application
+    
     [HttpPost("{id:int}/documents")]
     [Authorize(Policy = "TenantOnly")]
     public async Task<IActionResult> UploadDocuments(int id, [FromForm] List<IFormFile> files)
     {
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
-        var app = await _db.RentalApplications.FirstOrDefaultAsync(a => a.Id == id && a.TenantId == userId);
+        var app = await _applications.GetByIdForTenantAsync(id, userId);
         if (app is null) return NotFound();
 
-        // Validate all files before saving any
+        
         foreach (var file in files)
         {
             if (file.Length == 0) continue;
@@ -100,6 +106,7 @@ public class ApplicationsController : ControllerBase
         Directory.CreateDirectory(uploadDir);
 
         var urls = new List<string>();
+        var documents = new List<ApplicationDocument>();
         foreach (var file in files)
         {
             if (file.Length == 0) continue;
@@ -110,7 +117,7 @@ public class ApplicationsController : ControllerBase
             await file.CopyToAsync(stream);
 
             var url = $"/uploads/documents/{fileName}";
-            _db.ApplicationDocuments.Add(new ApplicationDocument
+            documents.Add(new ApplicationDocument
             {
                 RentalApplicationId = id,
                 DocumentUrl = url,
@@ -119,24 +126,24 @@ public class ApplicationsController : ControllerBase
             urls.Add(url);
         }
 
-        await _db.SaveChangesAsync();
+        if (documents.Count > 0)
+        {
+            await _applications.AddDocumentsAsync(documents);
+        }
         return Ok(new { documentUrls = urls });
     }
 
-    // Download document — only the tenant owner or property landlord can access
+    
     [HttpGet("{id:int}/documents/{documentId:int}")]
     [Authorize]
     public async Task<IActionResult> DownloadDocument(int id, int documentId)
     {
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
-        var doc = await _db.ApplicationDocuments
-            .Include(d => d.RentalApplication)
-                .ThenInclude(a => a.Property)
-            .FirstOrDefaultAsync(d => d.Id == documentId && d.RentalApplicationId == id);
+        var doc = await _applications.GetDocumentWithApplicationAsync(documentId, id);
 
         if (doc is null) return NotFound();
 
-        // Authorization: only the tenant who submitted or the property landlord
+        
         var application = doc.RentalApplication;
         if (application.TenantId != userId && application.Property.LandlordId != userId)
             return Forbid();
@@ -161,74 +168,67 @@ public class ApplicationsController : ControllerBase
         return PhysicalFile(filePath, contentType, doc.FileName);
     }
 
-    // Tenant — get my applications
+    
     [HttpGet("my")]
     [Authorize(Policy = "TenantOnly")]
     public async Task<IActionResult> GetMyApplications()
     {
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
-        var apps = await _db.RentalApplications
-            .Where(a => a.TenantId == userId)
-            .Include(a => a.Property)
-            .Include(a => a.Documents)
-            .OrderByDescending(a => a.CreatedAt)
-            .Select(a => new
-            {
-                a.Id, a.PropertyId,
-                PropertyTitle = a.Property.Title,
-                Status = a.Status.ToString(),
-                a.Message, a.RentalStartDate, a.RentalEndDate, a.CreatedAt,
-                Documents = a.Documents.Select(d => new { d.Id, d.FileName }).ToList()
-            })
-            .ToListAsync();
-        return Ok(apps);
+        var apps = await _applications.GetByTenantAsync(userId);
+        var result = apps.Select(a => new
+        {
+            a.Id,
+            a.PropertyId,
+            PropertyTitle = a.Property.Title,
+            Status = a.Status.ToString(),
+            a.Message,
+            a.RentalStartDate,
+            a.RentalEndDate,
+            a.CreatedAt,
+            Documents = a.Documents.Select(d => new { d.Id, d.FileName }).ToList()
+        });
+        return Ok(result);
     }
 
-    // Landlord — get applications for my properties
+    
     [HttpGet("landlord")]
     [Authorize(Policy = "LandlordOnly")]
     public async Task<IActionResult> GetLandlordApplications()
     {
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
-        var apps = await _db.RentalApplications
-            .Where(a => a.Property.LandlordId == userId)
-            .Include(a => a.Property)
-            .Include(a => a.Tenant)
-            .Include(a => a.Documents)
-            .OrderByDescending(a => a.CreatedAt)
-            .Select(a => new
-            {
-                a.Id, a.PropertyId,
-                PropertyTitle = a.Property.Title,
-                TenantName = a.Tenant.FullName,
-                TenantEmail = a.Tenant.Email,
-                Status = a.Status.ToString(),
-                a.Message, a.RentalStartDate, a.RentalEndDate, a.CreatedAt,
-                Documents = a.Documents.Select(d => new { d.Id, d.FileName }).ToList()
-            })
-            .ToListAsync();
-        return Ok(apps);
+        var apps = await _applications.GetForLandlordAsync(userId);
+        var result = apps.Select(a => new
+        {
+            a.Id,
+            a.PropertyId,
+            PropertyTitle = a.Property.Title,
+            TenantName = a.Tenant.FullName,
+            TenantEmail = a.Tenant.Email,
+            Status = a.Status.ToString(),
+            a.Message,
+            a.RentalStartDate,
+            a.RentalEndDate,
+            a.CreatedAt,
+            Documents = a.Documents.Select(d => new { d.Id, d.FileName }).ToList()
+        });
+        return Ok(result);
     }
 
-    // Landlord — accept application (property becomes Rented)
+    
     [HttpPost("{id:int}/accept")]
     [Authorize(Policy = "LandlordOnly")]
     public async Task<IActionResult> Accept(int id)
     {
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
-        var app = await _db.RentalApplications
-            .Include(a => a.Property)
-            .FirstOrDefaultAsync(a => a.Id == id && a.Property.LandlordId == userId);
+        var app = await _applications.GetByIdForLandlordAsync(id, userId);
 
         if (app is null) return NotFound();
 
         app.Status = ApplicationStatus.Accepted;
         app.Property.RentalStatus = RentalStatus.Rented;
 
-        // Reject all other pending applications for this property
-        var otherApps = await _db.RentalApplications
-            .Where(a => a.PropertyId == app.PropertyId && a.Id != id && a.Status == ApplicationStatus.Pending)
-            .ToListAsync();
+        
+        var otherApps = await _applications.GetOtherPendingForPropertyAsync(app.PropertyId, id);
 
         foreach (var other in otherApps)
         {
@@ -238,7 +238,7 @@ public class ApplicationsController : ControllerBase
                 NotificationType.ApplicationRejected, other.Id);
         }
 
-        await _db.SaveChangesAsync();
+        await _applications.SaveChangesAsync();
 
         await _notifications.SendAsync(app.TenantId,
             $"Congratulations! Your application for \"{app.Property.Title}\" has been accepted!",
@@ -247,20 +247,18 @@ public class ApplicationsController : ControllerBase
         return Ok(new { message = "Application accepted. Property status changed to Rented." });
     }
 
-    // Landlord — reject application
+    
     [HttpPost("{id:int}/reject")]
     [Authorize(Policy = "LandlordOnly")]
     public async Task<IActionResult> Reject(int id)
     {
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
-        var app = await _db.RentalApplications
-            .Include(a => a.Property)
-            .FirstOrDefaultAsync(a => a.Id == id && a.Property.LandlordId == userId);
+        var app = await _applications.GetByIdForLandlordAsync(id, userId);
 
         if (app is null) return NotFound();
 
         app.Status = ApplicationStatus.Rejected;
-        await _db.SaveChangesAsync();
+        await _applications.SaveChangesAsync();
 
         await _notifications.SendAsync(app.TenantId,
             $"Your application for \"{app.Property.Title}\" has been rejected.",

@@ -29,7 +29,7 @@ public class Property
 
     public PropertyType PropertyType { get; set; } = PropertyType.Apartment;
 
-    // Amenities
+    
     public bool HasParking { get; set; }
     public bool HasElevator { get; set; }
     public bool IsFurnished { get; set; }
@@ -43,7 +43,7 @@ public class Property
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
-    // Navigation properties
+    
     public ICollection<PropertyImage> Images { get; set; } = new List<PropertyImage>();
     public ICollection<VisitAppointment> VisitAppointments { get; set; } = new List<VisitAppointment>();
     public ICollection<RentalApplication> RentalApplications { get; set; } = new List<RentalApplication>();
