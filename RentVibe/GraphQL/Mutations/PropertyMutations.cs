@@ -116,7 +116,7 @@ public class PropertyMutations
     {
         Id = p.Id,
         LandlordId = p.LandlordId,
-        LandlordName = "",
+        LandlordName = p.Landlord?.FullName ?? "",
         Title = p.Title,
         Description = p.Description,
         Price = p.Price,
@@ -131,8 +131,8 @@ public class PropertyMutations
         Bathrooms = p.Bathrooms,
         AreaSqFt = p.AreaSqFt,
         CreatedAt = p.CreatedAt,
-        ImageUrls = new(),
-        AverageRating = 0,
-        ReviewCount = 0
+        ImageUrls = p.Images?.Select(i => i.ImageUrl).ToList() ?? new(),
+        AverageRating = p.Reviews?.Any() == true ? p.Reviews.Average(r => r.Rating) : 0,
+        ReviewCount = p.Reviews?.Count ?? 0
     };
 }
